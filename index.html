@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Inkbound - Comic Panel Game</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/addons/p5.sound.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #000;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      height: -webkit-fill-available; /* Fix for mobile viewport height */
+    }
+    #canvas-container {
+        flex-shrink: 0;
+    }
+    canvas {
+      display: block;
+      border: 2px solid white;
+      border-radius: 8px;
+    }
+    #controls-container, #mobile-controls-container {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 10px 0;
+      flex-wrap: wrap;
+    }
+    button {
+        padding: 10px 15px;
+        font-size: 16px;
+        cursor: pointer;
+        background-color: #333;
+        color: white;
+        border: 2px solid white;
+        border-radius: 8px;
+        margin: 5px;
+    }
+    #speedBoostBtn {
+        display: none; /* Hidden by default */
+        background-color: #0056b3;
+    }
+    #speedBoostBtn:disabled {
+        background-color: #555;
+        cursor: not-allowed;
+    }
+    .mobile-btn {
+        font-size: 24px;
+        width: 80px;
+        height: 60px;
+        background-color: rgba(255, 255, 255, 0.2);
+    }
+    @media (min-width: 768px) {
+        #mobile-controls-container {
+            display: none;
+        }
+    }
+    @media (max-width: 767px) {
+        #controls-container {
+            display: none;
+        }
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas-container"></div>
+  <div id="controls-container"></div>
+  <div id="mobile-controls-container"></div>
+
+<script>
+// Game state variables
+let player;
+let panels = [];
+let currentPanelIndex = 0;
+let inkPickups = [];
+let score = 0;
+let gameState = 'start'; // 'start' or 'playing'
+let baseInkSpeed = 2;
+let gameStartTime = 0;
+
+// Jackpot message variables
+let jackpotMessage = "";
+let jackpotMessageTimer = 0;
+
+// Speed Boost variables
+let speedBoostBtn;
+let speedBoostActive = false;
+let speedBoostTimer = 0;
+let speedBoostCooldown = 0;
+
+// Sound variables
+let bgMusic;
+let inkEnv, inkOsc;
+let musicOn = true;
+
+// Background elements
+let stars = [];
+let digitalRain = [];
+let vines = [];
+
+// --- p5.js Lifecycle Functions ---
+
+function setup() {
+  let canvas = createCanvas(800, 400);
+  canvas.parent('canvas-container');
+  windowResized(); // Initial resize
+  
+  // Initialize game objects
+  player = new Player(100, 300);
+  panels.push(new Panel("Noir City", "#1c1c1c"));
+  panels.push(new Panel("Cyber Abyss", "#112244"));
+  panels.push(new Panel("Forgotten Jungle", "#0E2F1A"));
+  
+  // Create background elements
+  generateBackgrounds();
+  
+  // Initialize synthesized sounds
+  setupSounds();
+
+  // UI Elements
+  createMuteButton();
+  createSpeedBoostButton();
+  createMobileControls();
+}
+
+function windowResized() {
+    // Maintain 2:1 aspect ratio
+    let canvasContainer = document.getElementById('canvas-container');
+    let containerWidth = canvasContainer.offsetWidth;
+    let sketchWidth = containerWidth;
+    let sketchHeight = sketchWidth / 2;
+    
+    if (sketchHeight > window.innerHeight * 0.7) {
+        sketchHeight = window.innerHeight * 0.7;
+        sketchWidth = sketchHeight * 2;
+    }
+    resizeCanvas(sketchWidth, sketchHeight);
+}
+
+function draw() {
+  scale(width / 800); // Scale all drawing operations
+  if (gameState === 'start') {
+    drawStartScreen();
+  } else if (gameState === 'playing') {
+    runGame();
+  }
+}
+
+function drawStartScreen() {
+    background(10, 10, 20);
+    fill(255);
+    textAlign(CENTER, CENTER);
+    textSize(64);
+    text("INKBOUND", 400, 200 - 40);
+    textSize(40);
+    text("Click or Tap to Start", 400, 200 + 40);
+}
+
+function runGame() {
+  // Set background color
+  background(panels[currentPanelIndex].bg);
+  // Draw dynamic background
+  drawDynamicBackground();
+
+  // Difficulty scaling
+  let timeElapsed = (millis() - gameStartTime) / 1000; // in seconds
+  let currentInkSpeed = baseInkSpeed + floor(timeElapsed / 30) * 0.5;
+
+  // Ink Generation
+  if (frameCount % 50 === 0) {
+      let x = random(20, 780);
+      inkPickups.push(new Ink(x, -20, currentPanelIndex, currentInkSpeed)); 
+  }
+
+  // Update and display the player
+  player.update();
+  player.display();
+
+  // Handle ink pickups
+  for (let i = inkPickups.length - 1; i >= 0; i--) {
+    let ink = inkPickups[i];
+    ink.update(); 
+    
+    if (ink.panel === currentPanelIndex) {
+      ink.display();
+      if (!ink.collected && player.collidesWith(ink)) {
+        ink.collected = true;
+        score += ink.points;
+        inkEnv.play(inkOsc);
+        
+        if (ink.type === 'jackpot') {
+            jackpotMessage = "JACKPOT!";
+            jackpotMessageTimer = 120;
+        }
+        if (score >= 100) {
+            speedBoostBtn.style('display', 'inline-block');
+        }
+      }
+    }
+
+    if (ink.collected || ink.y > 400 + ink.size) {
+        inkPickups.splice(i, 1);
+    }
+  }
+  
+  // Draw UI & Effects
+  drawVignette();
+  drawUI();
+  drawJackpotMessage();
+  handleSpeedBoost();
+}
+
+// --- Input Handling ---
+
+function startGame() {
+    if (gameState === 'start') {
+        userStartAudio();
+        bgMusic.amp(0.3, 1.0); 
+        gameState = 'playing';
+        gameStartTime = millis();
+    }
+}
+
+function mousePressed() {
+    startGame();
+}
+
+function touchStarted() {
+    startGame();
+    return false; // prevent default browser behavior
+}
+
+function keyPressed() {
+  if (gameState !== 'playing') return;
+  if (key === 'a' || key === 'A' || keyCode === LEFT_ARROW) player.left = true;
+  if (key === 'd' || key === 'D' || keyCode === RIGHT_ARROW) player.right = true;
+  if (key === 'w' || key === 'W' || keyCode === UP_ARROW || key === ' ') player.jump();
+}
+
+function keyReleased() {
+  if (key === 'a' || key === 'A' || keyCode === LEFT_ARROW) player.left = false;
+  if (key === 'd' || key === 'D' || keyCode === RIGHT_ARROW) player.right = false;
+}
+
+// --- UI, Sound & Background Functions ---
+
+function drawUI() {
+  const originalWidth = 800;
+  const originalHeight = 400;
+  
+  rectMode(CORNER);
+  fill(0, 0, 0, 120);
+  noStroke();
+  rect(10, 10, 220, 40, 5);
+  
+  fill(255);
+  textSize(24);
+  textAlign(LEFT, CENTER);
+  text("Score: " + score, 25, 30);
+
+  const panelName = panels[currentPanelIndex].name;
+  textSize(32);
+  const textW = textWidth(panelName) + 40;
+  fill(0, 0, 0, 120);
+  noStroke();
+  rectMode(CENTER);
+  rect(originalWidth / 2, 35, textW, 50, 5);
+  fill(255, 220);
+  textAlign(CENTER, CENTER);
+  text(panelName, originalWidth / 2, 35);
+}
+
+function drawVignette() {
+    noStroke();
+    for (let i = 0; i < 200; i++) {
+        let alpha = map(i, 0, 200, 0, 60);
+        fill(0, alpha);
+        rect(0, i, 800, 1);
+        rect(0, 400 - i, 800, 1);
+    }
+}
+
+function drawJackpotMessage() {
+    if (jackpotMessageTimer > 0) {
+        push();
+        let alpha = map(jackpotMessageTimer, 0, 60, 0, 255, true);
+        let size = map(jackpotMessageTimer, 120, 90, 100, 80, true);
+        fill(255, 223, 0, alpha);
+        stroke(0, alpha);
+        strokeWeight(4);
+        textSize(size);
+        textAlign(CENTER, CENTER);
+        text(jackpotMessage, 400, 200);
+        pop();
+        jackpotMessageTimer--;
+    }
+}
+
+function generateBackgrounds() {
+    for (let i = 0; i < 100; i++) stars.push({x: random(800), y: random(400), size: random(1, 3)});
+    for (let i = 0; i < 100; i++) digitalRain.push({x: random(800), y: random(400), speed: random(2, 5)});
+    for (let i = 0; i < 15; i++) vines.push({x: random(800), y1: 0, y2: random(200, 400), thickness: random(1, 4)});
+}
+
+function drawDynamicBackground() {
+    if (currentPanelIndex === 0) { // Noir City
+        noStroke(); fill(255, 255, 255, 150);
+        for (const star of stars) ellipse(star.x, star.y, star.size);
+    } else if (currentPanelIndex === 1) { // Cyber Abyss
+        noStroke(); fill(0, 255, 100, 150); textSize(16);
+        for (const drop of digitalRain) {
+            text(String.fromCharCode(0x30A0 + round(random(0, 96))), drop.x, drop.y);
+            drop.y += drop.speed; if (drop.y > 400) drop.y = 0;
+        }
+    } else if (currentPanelIndex === 2) { // Forgotten Jungle
+        stroke(0, 50, 20, 150);
+        for (const vine of vines) { strokeWeight(vine.thickness); line(vine.x, vine.y1, vine.x, vine.y2); }
+    }
+}
+
+function createMuteButton() {
+  let btn = createButton("Music");
+  btn.parent('controls-container');
+  btn.mousePressed(() => {
+    if (gameState === 'playing') {
+        musicOn = !musicOn;
+        if (musicOn) bgMusic.amp(0.3, 0.5); else bgMusic.amp(0, 0.5);
+    }
+  });
+}
+
+function createSpeedBoostButton() {
+    speedBoostBtn = createButton("Speed Boost");
+    speedBoostBtn.id('speedBoostBtn');
+    speedBoostBtn.parent('controls-container');
+    speedBoostBtn.mousePressed(() => {
+        if (speedBoostCooldown <= 0) {
+            speedBoostActive = true; speedBoostTimer = 180; speedBoostCooldown = 600;
+        }
+    });
+}
+
+function createMobileControls() {
+    const mobileControls = select('#mobile-controls-container');
+    
+    const leftBtn = createButton('◀');
+    leftBtn.parent(mobileControls);
+    leftBtn.addClass('mobile-btn');
+    leftBtn.touchStarted(() => player.left = true);
+    leftBtn.touchEnded(() => player.left = false);
+
+    const jumpBtn = createButton('▲');
+    jumpBtn.parent(mobileControls);
+    jumpBtn.addClass('mobile-btn');
+    jumpBtn.touchStarted(() => player.jump());
+
+    const rightBtn = createButton('▶');
+    rightBtn.parent(mobileControls);
+    rightBtn.addClass('mobile-btn');
+    rightBtn.touchStarted(() => player.right = true);
+    rightBtn.touchEnded(() => player.right = false);
+}
+
+
+function handleSpeedBoost() {
+    if (speedBoostActive) { player.speed = 8; speedBoostTimer--; if (speedBoostTimer <= 0) speedBoostActive = false; }
+    else { player.speed = 4; }
+    if (speedBoostCooldown > 0) {
+        speedBoostCooldown--; speedBoostBtn.elt.disabled = true;
+        let cooldownSeconds = ceil(speedBoostCooldown / 60);
+        speedBoostBtn.html(`Cooldown: ${cooldownSeconds}`);
+    } else if (score >= 100) { speedBoostBtn.elt.disabled = false; speedBoostBtn.html("Speed Boost"); }
+}
+
+function setupSounds() {
+    bgMusic = new p5.Oscillator('sine'); bgMusic.freq(110); bgMusic.amp(0); bgMusic.start();
+    inkEnv = new p5.Envelope(); inkEnv.setADSR(0.01, 0.05, 0.1, 0.2); inkEnv.setRange(0.5, 0);
+    inkOsc = new p5.Oscillator('triangle'); inkOsc.freq(880); inkOsc.amp(inkEnv); inkOsc.start();
+}
+
+// --- Game Object Classes ---
+class Panel { constructor(name, bg) { this.name = name; this.bg = bg; } }
+class Ink {
+  constructor(x, y, panel, speed) {
+    this.x = x; this.y = y; this.vy = speed; this.collected = false; this.panel = panel; this.angle = random(TWO_PI);
+    let r = random(1);
+    if (r < 0.02) { this.type = 'jackpot'; this.color = color(255, 223, 0); this.points = 25; this.size = 25; }
+    else if (r < 0.20) { this.type = 'uncommon'; this.color = color(0, 255, 255); this.points = 5; this.size = 18; }
+    else { this.type = 'common'; this.color = color(255, 50, 200); this.points = 1; this.size = 15; }
+  }
+  update() { this.y += this.vy; this.angle += 0.05; }
+  display() {
+    push(); translate(this.x, this.y);
+    let yOffset = sin(this.angle) * 3;
+    noStroke(); fill(this.color); ellipse(0, yOffset, this.size, this.size);
+    let glowColor = this.color; glowColor.setAlpha(150); fill(glowColor);
+    if (this.type === 'jackpot') { let pulse = sin(this.angle * 4) * 5 + 5; ellipse(0, yOffset, this.size * 1.5 + pulse, this.size * 1.5 + pulse); }
+    else { ellipse(0, yOffset, this.size * 1.5, this.size * 1.5); }
+    pop();
+  }
+}
+class Player {
+  constructor(x, y) {
+    this.x = x; this.y = y; this.w = 30; this.h = 40; this.vx = 0; this.vy = 0; this.speed = 4;
+    this.gravity = 0.6; this.jumpForce = -12; this.onGround = false; this.left = false; this.right = false;
+    this.squash = 1; this.stretch = 1; this.facing = 1;
+  }
+  update() {
+    if (this.left) { this.vx = -this.speed; this.facing = -1; }
+    else if (this.right) { this.vx = this.speed; this.facing = 1; }
+    else { this.vx = 0; }
+    this.x += this.vx; this.vy += this.gravity; this.y += this.vy;
+    if (this.y + this.h / 2 > 400 - 20) {
+      if (!this.onGround) { this.squash = 1.3; this.stretch = 0.7; }
+      this.y = 400 - 20 - this.h / 2; this.vy = 0; this.onGround = true;
+    } else { this.onGround = false; }
+    this.squash = lerp(this.squash, 1, 0.1); this.stretch = lerp(this.stretch, 1, 0.1);
+    if (this.x > 800) { currentPanelIndex = (currentPanelIndex + 1) % panels.length; this.x = 10; }
+    else if (this.x < 0) { currentPanelIndex = (currentPanelIndex - 1 + panels.length) % panels.length; this.x = 800 - 10; }
+  }
+  jump() { if (this.onGround) { this.vy = this.jumpForce; this.squash = 0.7; this.stretch = 1.3; } }
+  display() {
+    push(); translate(this.x, this.y);
+    let animatedW = this.w * this.squash; let animatedH = this.h * this.stretch;
+    fill(255); noStroke(); rectMode(CENTER); rect(0, 0, animatedW, animatedH, 5);
+    fill(0); ellipse(5 * this.facing, -5, 8, 8);
+    pop();
+  }
+  collidesWith(other) { return ( this.x - this.w / 2 < other.x + other.size / 2 && this.x + this.w / 2 > other.x - other.size / 2 && this.y - this.h / 2 < other.y + other.size / 2 && this.y + this.h / 2 > other.y - other.size / 2 ); }
+}
+</script>
+</body>
+</html>
